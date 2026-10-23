@@ -1,0 +1,29 @@
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Install the badminton task into an existing Isaac Lab environment."""
+
+from pathlib import Path
+
+import toml
+from setuptools import find_packages, setup
+
+EXTENSION_PATH = Path(__file__).resolve().parent
+METADATA = toml.load(EXTENSION_PATH / "config" / "extension.toml")["package"]
+
+setup(
+    name="badmintonlab_game",
+    version=METADATA["version"],
+    description=METADATA["description"],
+    keywords=METADATA["keywords"],
+    packages=find_packages(exclude=["tests", "tests.*"]),
+    python_requires=">=3.10",
+    install_requires=["gymnasium", "packaging", "rsl-rl-lib>=3.0.1", "tensordict"],
+    extras_require={
+        "video": ["moviepy", "imageio[ffmpeg]"],
+        "dev": ["build", "pytest", "ruff"],
+    },
+    zip_safe=False,
+)

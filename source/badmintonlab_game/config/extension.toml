@@ -1,0 +1,14 @@
+[package]
+version = "0.1.0"
+category = "isaaclab"
+title = "BadmintonLab-Game"
+description = "Shared-policy self-play for Booster T1 badminton in Isaac Lab"
+keywords = ["isaaclab", "robotics", "badminton", "self-play", "reinforcement-learning"]
+
+[dependencies]
+"isaaclab" = {}
+"isaaclab_rl" = {}
+"isaaclab_tasks" = {}
+
+[[python.module]]
+name = "badmintonlab_game"
