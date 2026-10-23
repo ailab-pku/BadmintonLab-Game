@@ -22,7 +22,7 @@ python -m pip install -e source/badmintonlab_game
 python scripts/rsl_rl/train.py --headless --num_envs 2048
 ```
 
-默认任务为 `Booster-Badminton-Dual-v1`。可以先用较少球场进行冒烟检查：
+默认任务为 `BadmintonLab-Game`。可以先用较少球场进行冒烟检查：
 
 ```bash
 python scripts/rsl_rl/train.py --headless --num_envs 4 --max_iterations 2

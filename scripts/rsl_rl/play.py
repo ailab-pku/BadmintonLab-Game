@@ -15,7 +15,7 @@ from isaaclab.app import AppLauncher
 import cli_args
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--task", default="Booster-Badminton-Dual-v1", help="Registered badminton task.")
+parser.add_argument("--task", default="BadmintonLab-Game", help="Registered badminton task.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of two-player courts.")
 parser.add_argument("--seed", type=int, default=None, help="Random seed (-1 samples a seed).")
 parser.add_argument("--real-time", action="store_true", help="Pace playback to simulation time.")
