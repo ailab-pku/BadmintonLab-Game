@@ -56,7 +56,6 @@ scripts/rsl_rl/
 source/badmintonlab_game/
   config/extension.toml        # Isaac Lab 扩展元数据
   badmintonlab_game/
-    inference.py               # 双玩家观测和动作适配
     assets/                    # 球场、T1 与执行器配置
     tasks/manager_based/badmintonlab_game/
       dual_agent_env.py        # 物理推进、击球、判定与重置

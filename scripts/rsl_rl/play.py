@@ -36,12 +36,13 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import badmintonlab_game.tasks  # noqa: F401
-from badmintonlab_game.inference import DualPlayerController
 
 
 @hydra_task_config(args_cli.task, "")
 def main(env_cfg: ManagerBasedEnvCfg, _agent_cfg):
     """Run each player's deterministic policy on that player's observations."""
+    if args_cli.clip_actions is not None and args_cli.clip_actions <= 0:
+        raise ValueError("--clip_actions must be positive.")
     env_cfg.scene.num_envs = args_cli.num_envs
     env_cfg.seed = random.randint(0, 10000) if args_cli.seed == -1 else args_cli.seed
     if args_cli.device is not None:
@@ -56,14 +57,14 @@ def main(env_cfg: ManagerBasedEnvCfg, _agent_cfg):
         obs, _ = env.reset()
         player0_policy = torch.jit.load(player0_checkpoint_path, map_location=env.unwrapped.device).eval()
         player1_policy = torch.jit.load(player1_checkpoint_path, map_location=env.unwrapped.device).eval()
-        controller = DualPlayerController(
-            player0_policy,
-            player1_policy,
-            clip_actions=args_cli.clip_actions,
-        )
         while simulation_app.is_running():
             with torch.inference_mode():
-                obs, _ = env.step(controller(obs))
+                player0_action = player0_policy(obs["player_0"])
+                player1_action = player1_policy(obs["player_1"])
+                if args_cli.clip_actions is not None:
+                    player0_action = player0_action.clamp(-args_cli.clip_actions, args_cli.clip_actions)
+                    player1_action = player1_action.clamp(-args_cli.clip_actions, args_cli.clip_actions)
+                obs, _ = env.step(torch.cat((player0_action, player1_action), dim=-1))
     finally:
         env.close()
 
