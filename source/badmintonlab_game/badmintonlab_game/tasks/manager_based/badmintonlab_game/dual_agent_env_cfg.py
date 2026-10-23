@@ -1,22 +1,136 @@
-import math
+import dataclasses
 
-from isaaclab.envs import ManagerBasedRLEnvCfg
+import isaaclab.sim as sim_utils
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+from isaaclab.envs import ManagerBasedEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.managers import ObservationGroupCfg as ObsGroup
-from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sim.spawners.from_files.from_files import spawn_from_urdf
+from isaaclab.sim.utils import bind_physics_material
+from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
+from isaacsim.core.utils.stage import get_current_stage
 
-from badmintonlab_game.assets.robots.booster import T1_ACTION_SCALE
+from badmintonlab_game.assets.court import BadmintonCourtCfg
+from badmintonlab_game.assets.robots.booster import BOOSTER_T1_CFG, T1_ACTION_SCALE
 
 from . import mdp
-from .badminton_scene_cfg import (
-    _COURT_CFG,
-    _ROBOT_RESET_Y_RANGE,
-    DualAgentSceneCfg,
-)
+from .player0_cfg import EventsCfg as Player0EventsCfg
+from .player0_cfg import ObsCfg as Player0ObsCfg
+from .player1_cfg import EventsCfg as Player1EventsCfg
+from .player1_cfg import ObsCfg as Player1ObsCfg
+
+_COURT_CFG = BadmintonCourtCfg()
+def spawn_urdf_with_racket_material(
+    prim_path: str,
+    cfg,
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+    **kwargs,
+):
+    prim = spawn_from_urdf(
+        prim_path,
+        cfg,
+        translation=translation,
+        orientation=orientation,
+        **kwargs,
+    )
+    material_name = prim.GetPath().pathString.rsplit("/", 1)[-1].lower()
+    material_path = f"/World/PhysicsMaterials/{material_name}_racket"
+    material_cfg = sim_utils.RigidBodyMaterialCfg(
+        static_friction=0.2,
+        dynamic_friction=0.15,
+        restitution=0.75,
+        friction_combine_mode="average",
+        restitution_combine_mode="max",
+    )
+    material_cfg.func(material_path, material_cfg)
+    racket_prim = get_current_stage().GetPrimAtPath(f"{prim.GetPath().pathString}/racket_link")
+    pending = [racket_prim]
+    while pending:
+        child = pending.pop()
+        if child.IsInstance():
+            child.SetInstanceable(False)
+        pending.extend(child.GetChildren())
+    bind_physics_material(
+        f"{prim.GetPath().pathString}/racket_link",
+        material_path,
+        stage=get_current_stage(),
+    )
+    return prim
+
+
+def _racket_sensor(side: int) -> ContactSensorCfg:
+    return ContactSensorCfg(
+        prim_path=f"{{ENV_REGEX_NS}}/Robot{side}/racket_link",
+        history_length=4,
+        track_air_time=False,
+        force_threshold=1.0,
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Shuttle"],
+    )
+
+
+@configclass
+class DualAgentSceneCfg(InteractiveSceneCfg):
+    terrain = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        visual_material=sim_utils.MdlFileCfg(
+            mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
+            project_uvw=True,
+        ),
+    )
+    robot_0: ArticulationCfg = BOOSTER_T1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot0")
+    robot_1: ArticulationCfg = BOOSTER_T1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot1")
+    shuttle: RigidObjectCfg = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Shuttle",
+        spawn=sim_utils.SphereCfg(
+            radius=0.025,
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0), roughness=0.4),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                retain_accelerations=False,
+                linear_damping=0.0,
+                angular_damping=0.05,
+                max_linear_velocity=1000.0,
+                max_angular_velocity=1000.0,
+                max_depenetration_velocity=1.0,
+            ),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.00519),
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                static_friction=0.6,
+                dynamic_friction=0.4,
+                restitution=0.05,
+                friction_combine_mode="average",
+                restitution_combine_mode="min",
+            ),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(-3.0, 0.0, 1.55)),
+    )
+    racket_contact_0 = _racket_sensor(0)
+    racket_contact_1 = _racket_sensor(1)
+    dome_light = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        for robot in (self.robot_0, self.robot_1):
+            robot.spawn = dataclasses.replace(
+                robot.spawn, merge_fixed_joints=False, func=spawn_urdf_with_racket_material
+            )
 
 
 @configclass
@@ -31,136 +145,12 @@ class DualActionsCfg:
 
 @configclass
 class DualObservationsCfg:
-    @configclass
-    class Player0Cfg(ObsGroup):
-        robot_heading_court = ObsTerm(
-            func=mdp.canonical_robot_heading_court, params={"asset_cfg": SceneEntityCfg("robot_0"), "side": 0}
-        )
-        robot_pos_court = ObsTerm(
-            func=mdp.canonical_robot_pos_court, params={"asset_cfg": SceneEntityCfg("robot_0"), "side": 0}
-        )
-        shuttle_pos_b = ObsTerm(
-            func=mdp.shuttle_pos_b,
-            params={"asset_cfg": SceneEntityCfg("robot_0"), "shuttle_cfg": SceneEntityCfg("shuttle")},
-        )
-        shuttle_vel_b = ObsTerm(
-            func=mdp.shuttle_vel_b,
-            params={"asset_cfg": SceneEntityCfg("robot_0"), "shuttle_cfg": SceneEntityCfg("shuttle")},
-        )
-        opponent_heading_court = ObsTerm(
-            func=mdp.canonical_robot_heading_court, params={"asset_cfg": SceneEntityCfg("robot_1"), "side": 0}
-        )
-        opponent_pos_court = ObsTerm(
-            func=mdp.canonical_robot_pos_court, params={"asset_cfg": SceneEntityCfg("robot_1"), "side": 0}
-        )
-        opponent_projected_gravity = ObsTerm(
-            func=mdp.projected_gravity, params={"asset_cfg": SceneEntityCfg("robot_1")}
-        )
-        opponent_joint_pos = ObsTerm(func=mdp.joint_pos_rel, params={"asset_cfg": SceneEntityCfg("robot_1")})
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, params={"asset_cfg": SceneEntityCfg("robot_0")})
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, params={"asset_cfg": SceneEntityCfg("robot_0")})
-        projected_gravity = ObsTerm(func=mdp.projected_gravity, params={"asset_cfg": SceneEntityCfg("robot_0")})
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, params={"asset_cfg": SceneEntityCfg("robot_0")})
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, params={"asset_cfg": SceneEntityCfg("robot_0")})
-        last_action = ObsTerm(func=mdp.last_action, params={"action_name": "player_0"})
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
-
-    @configclass
-    class Player1Cfg(ObsGroup):
-        robot_heading_court = ObsTerm(
-            func=mdp.canonical_robot_heading_court, params={"asset_cfg": SceneEntityCfg("robot_1"), "side": 1}
-        )
-        robot_pos_court = ObsTerm(
-            func=mdp.canonical_robot_pos_court, params={"asset_cfg": SceneEntityCfg("robot_1"), "side": 1}
-        )
-        shuttle_pos_b = ObsTerm(
-            func=mdp.shuttle_pos_b,
-            params={"asset_cfg": SceneEntityCfg("robot_1"), "shuttle_cfg": SceneEntityCfg("shuttle")},
-        )
-        shuttle_vel_b = ObsTerm(
-            func=mdp.shuttle_vel_b,
-            params={"asset_cfg": SceneEntityCfg("robot_1"), "shuttle_cfg": SceneEntityCfg("shuttle")},
-        )
-        opponent_heading_court = ObsTerm(
-            func=mdp.canonical_robot_heading_court, params={"asset_cfg": SceneEntityCfg("robot_0"), "side": 1}
-        )
-        opponent_pos_court = ObsTerm(
-            func=mdp.canonical_robot_pos_court, params={"asset_cfg": SceneEntityCfg("robot_0"), "side": 1}
-        )
-        opponent_projected_gravity = ObsTerm(
-            func=mdp.projected_gravity, params={"asset_cfg": SceneEntityCfg("robot_0")}
-        )
-        opponent_joint_pos = ObsTerm(func=mdp.joint_pos_rel, params={"asset_cfg": SceneEntityCfg("robot_0")})
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, params={"asset_cfg": SceneEntityCfg("robot_1")})
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, params={"asset_cfg": SceneEntityCfg("robot_1")})
-        projected_gravity = ObsTerm(func=mdp.projected_gravity, params={"asset_cfg": SceneEntityCfg("robot_1")})
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, params={"asset_cfg": SceneEntityCfg("robot_1")})
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, params={"asset_cfg": SceneEntityCfg("robot_1")})
-        last_action = ObsTerm(func=mdp.last_action, params={"action_name": "player_1"})
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
-
-    player_0: Player0Cfg = Player0Cfg()
-    player_1: Player1Cfg = Player1Cfg()
+    player_0: Player0ObsCfg = Player0ObsCfg()
+    player_1: Player1ObsCfg = Player1ObsCfg()
 
 
 @configclass
-class DualEventsCfg:
-    reset_robot_0_root = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot_0"),
-            "pose_range": {
-                "x": (-0.5 * _COURT_CFG.half_length - 0.35, -0.5 * _COURT_CFG.half_length + 0.35),
-                "y": _ROBOT_RESET_Y_RANGE,
-                "z": (-0.01, 0.01),
-                "roll": (-0.03, 0.03),
-                "pitch": (-0.03, 0.03),
-                "yaw": (-0.12, 0.12),
-            },
-            "velocity_range": {axis: (0.0, 0.0) for axis in ("x", "y", "z", "roll", "pitch", "yaw")},
-        },
-    )
-    reset_robot_1_root = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot_1"),
-            "pose_range": {
-                "x": (0.5 * _COURT_CFG.half_length - 0.35, 0.5 * _COURT_CFG.half_length + 0.35),
-                "y": _ROBOT_RESET_Y_RANGE,
-                "z": (-0.01, 0.01),
-                "roll": (-0.03, 0.03),
-                "pitch": (-0.03, 0.03),
-                "yaw": (math.pi - 0.12, math.pi + 0.12),
-            },
-            "velocity_range": {axis: (0.0, 0.0) for axis in ("x", "y", "z", "roll", "pitch", "yaw")},
-        },
-    )
-    reset_robot_0_joints = EventTerm(
-        func=mdp.reset_joints_by_scale,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot_0", joint_names=[".*"]),
-            "position_range": (0.95, 1.05),
-            "velocity_range": (0.0, 0.0),
-        },
-    )
-    reset_robot_1_joints = EventTerm(
-        func=mdp.reset_joints_by_scale,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot_1", joint_names=[".*"]),
-            "position_range": (0.95, 1.05),
-            "velocity_range": (0.0, 0.0),
-        },
-    )
+class DualEventsCfg(Player0EventsCfg, Player1EventsCfg):
     reset_shuttle_pose = EventTerm(
         func=mdp.reset_shuttle_drop_state,
         mode="reset",
@@ -172,162 +162,20 @@ class DualEventsCfg:
 
 
 @configclass
-class Player0RewardsCfg:
-    """Default duel objective: win/loss plus zero-at-ideal task and control costs."""
-
-    anti_fall = RewTerm(
-        func=mdp.agent_root_height_violation_cost,
-        weight=-0.1,
-        params={"asset_cfg": SceneEntityCfg("robot_0"), "minimum_height": 0.55, "height_sigma": 10.0},
-    )
-    root_orientation = RewTerm(
-        func=mdp.agent_root_orientation_violation_cost,
-        weight=-0.1,
-        params={
-            "asset_cfg": SceneEntityCfg("robot_0"),
-            "side": 0,
-            "max_rp_angle_deg": 45.0,
-            "max_yaw_angle_deg": 90.0,
-            "rad_sigma": 10.0,
-        },
-    )
-    racket_ground = RewTerm(
-        func=mdp.racket_ground_support_penalty,
-        weight=-2.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("racket_ground_contact_0", body_names=["racket_link"]),
-            "force_threshold": 3.0,
-            "force_scale": 10.0,
-            "max_penalty": 1.0,
-        },
-    )
-    joint_limit = RewTerm(
-        func=mdp.joint_pos_limits, weight=-2.0, params={"asset_cfg": SceneEntityCfg("robot_0", joint_names=[".*"])}
-    )
-    action_rate = RewTerm(func=mdp.agent_action_rate_l2, weight=-0.1, params={"action_name": "player_0"})
-    foot_slip = RewTerm(
-        func=mdp.foot_slip_penalty,
-        weight=-0.05,
-        params={"asset_cfg": SceneEntityCfg("robot_0", body_names=["left_foot_link", "right_foot_link"])},
-    )
-    interval_approach = RewTerm(
-        func=mdp.agent_interval_approach_cost,
-        weight=-0.25,
-        params={
-            "side": 0,
-            "min_height": 0.5,
-            "max_height": 2.0,
-            "full_reward_radius": 0.1,
-            "distance_sigma": 0.45,
-        },
-    )
-    outgoing_quality = RewTerm(
-        func=mdp.agent_outgoing_shot_quality_cost,
-        weight=-0.25,
-        params={
-            "shuttle_cfg": SceneEntityCfg("shuttle"),
-            "side": 0,
-            "target_speed": 10.0,
-            "minimum_net_clearance_height": 1.55,
-            "direction_sigma": 0.15,
-        },
-    )
-    rally_result = RewTerm(func=mdp.agent_rally_result_reward, weight=10.0, params={"side": 0})
-
-
-@configclass
-class Player1RewardsCfg:
-    """Player-1 mirror of the default duel objective."""
-
-    anti_fall = RewTerm(
-        func=mdp.agent_root_height_violation_cost,
-        weight=-0.1,
-        params={"asset_cfg": SceneEntityCfg("robot_1"), "minimum_height": 0.55, "height_sigma": 10.0},
-    )
-    root_orientation = RewTerm(
-        func=mdp.agent_root_orientation_violation_cost,
-        weight=-0.1,
-        params={
-            "asset_cfg": SceneEntityCfg("robot_1"),
-            "side": 1,
-            "max_rp_angle_deg": 45.0,
-            "max_yaw_angle_deg": 90.0,
-            "rad_sigma": 10.0,
-        },
-    )
-    racket_ground = RewTerm(
-        func=mdp.racket_ground_support_penalty,
-        weight=-2.0,
-        params={
-            "sensor_cfg": SceneEntityCfg("racket_ground_contact_1", body_names=["racket_link"]),
-            "force_threshold": 3.0,
-            "force_scale": 10.0,
-            "max_penalty": 1.0,
-        },
-    )
-    joint_limit = RewTerm(
-        func=mdp.joint_pos_limits, weight=-2.0, params={"asset_cfg": SceneEntityCfg("robot_1", joint_names=[".*"])}
-    )
-    action_rate = RewTerm(func=mdp.agent_action_rate_l2, weight=-0.1, params={"action_name": "player_1"})
-    foot_slip = RewTerm(
-        func=mdp.foot_slip_penalty,
-        weight=-0.05,
-        params={"asset_cfg": SceneEntityCfg("robot_1", body_names=["left_foot_link", "right_foot_link"])},
-    )
-    interval_approach = RewTerm(
-        func=mdp.agent_interval_approach_cost,
-        weight=-0.25,
-        params={
-            "side": 1,
-            "min_height": 0.5,
-            "max_height": 2.0,
-            "full_reward_radius": 0.1,
-            "distance_sigma": 0.45,
-        },
-    )
-    outgoing_quality = RewTerm(
-        func=mdp.agent_outgoing_shot_quality_cost,
-        weight=-0.25,
-        params={
-            "shuttle_cfg": SceneEntityCfg("shuttle"),
-            "side": 1,
-            "target_speed": 10.0,
-            "minimum_net_clearance_height": 1.55,
-            "direction_sigma": 0.15,
-        },
-    )
-    rally_result = RewTerm(func=mdp.agent_rally_result_reward, weight=10.0, params={"side": 1})
-
-
-@configclass
-class DualTerminationsCfg:
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    rally_resolved = DoneTerm(func=mdp.rally_resolved)
-
-
-@configclass
-class DualAgentBadmintonEnvCfg(ManagerBasedRLEnvCfg):
+class DualAgentBadmintonEnvCfg(ManagerBasedEnvCfg):
     scene: DualAgentSceneCfg = DualAgentSceneCfg(num_envs=2048, env_spacing=15.0)
     observations: DualObservationsCfg = DualObservationsCfg()
     actions: DualActionsCfg = DualActionsCfg()
     events: DualEventsCfg = DualEventsCfg()
-    rewards: Player0RewardsCfg = Player0RewardsCfg()
-    player_1_rewards: Player1RewardsCfg = Player1RewardsCfg()
-    terminations: DualTerminationsCfg = DualTerminationsCfg()
     shuttle_mass = 0.00519
     shuttle_drag_k = 0.00110
     gravity_z = -9.81
     shuttle_landing_detection_height = 0.03
     hit_contact_threshold = 1.0
-    return_history_window = 8
-
-    process_reward_cap: int = 4
 
     def __post_init__(self):
         self.decimation = 4
-        self.episode_length_s = 10.0
         self.sim.dt = 0.005
-        self.sim.render_interval = self.decimation
         self.viewer.origin_type = "world"
         self.viewer.eye = (7.0, -9.0, 5.0)
         self.viewer.lookat = (0.0, 0.0, 0.8)

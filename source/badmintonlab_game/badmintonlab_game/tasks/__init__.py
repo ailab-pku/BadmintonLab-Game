@@ -3,6 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Register the shared-policy badminton task with Gymnasium."""
+"""Register the two-player badminton task with Gymnasium."""
 
 from .manager_based import badmintonlab_game  # noqa: F401

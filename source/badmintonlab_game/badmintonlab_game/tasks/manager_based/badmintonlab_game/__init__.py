@@ -13,6 +13,5 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.dual_agent_env_cfg:DualAgentBadmintonEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{__name__}.agents.rsl_rl_ppo_cfg:PPORunnerCfg",
     },
 )

@@ -20,10 +20,7 @@ setup(
     keywords=METADATA["keywords"],
     packages=find_packages(exclude=["tests", "tests.*"]),
     python_requires=">=3.10",
-    install_requires=["gymnasium", "packaging", "rsl-rl-lib>=3.0.1", "tensordict"],
-    extras_require={
-        "video": ["moviepy", "imageio[ffmpeg]"],
-        "dev": ["build", "pytest", "ruff"],
-    },
+    install_requires=["gymnasium", "torch"],
+    extras_require={"dev": ["build", "ruff"]},
     zip_safe=False,
 )

@@ -3,93 +3,67 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Replay a shared-policy badminton checkpoint."""
+"""Play badminton with a separate TorchScript policy for each player."""
 
 import argparse
-import os
+import random
 import sys
-import time
 
 from isaaclab.app import AppLauncher
 
-import cli_args
-
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--player0_checkpoint", required=True, help="Player 0 TorchScript model including observation normalization."
+)
+parser.add_argument(
+    "--player1_checkpoint", required=True, help="Player 1 TorchScript model including observation normalization."
+)
 parser.add_argument("--task", default="BadmintonLab-Game", help="Registered badminton task.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of two-player courts.")
-parser.add_argument("--seed", type=int, default=None, help="Random seed (-1 samples a seed).")
-parser.add_argument("--real-time", action="store_true", help="Pace playback to simulation time.")
-parser.add_argument("--video", action="store_true", help="Record one playback video, then exit.")
-parser.add_argument("--video_length", type=int, default=200, help="Video length in control steps.")
-cli_args.add_rsl_rl_args(parser)
+parser.add_argument("--seed", type=int, default=42, help="Random seed (-1 samples a seed).")
+parser.add_argument("--clip_actions", type=float, default=None, help="Optional symmetric action clipping limit.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
-if args_cli.video:
-    args_cli.enable_cameras = True
 sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import gymnasium as gym
 import torch
-from rsl_rl.runners import OnPolicyRunner
 
-from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.envs import ManagerBasedEnvCfg
 from isaaclab.utils.assets import retrieve_file_path
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg
-from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import badmintonlab_game.tasks  # noqa: F401
-from badmintonlab_game.tasks.manager_based.badmintonlab_game.shared_policy_wrapper import SharedPolicyVecEnvWrapper
-
-from common import load_weights, prepare_agent_cfg
+from badmintonlab_game.inference import DualPlayerController
 
 
-@hydra_task_config(args_cli.task, "rsl_rl_cfg_entry_point")
-def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg: RslRlOnPolicyRunnerCfg):
-    """Control both players with the same deterministic policy."""
-    agent_cfg = prepare_agent_cfg(cli_args.update_rsl_rl_cfg(agent_cfg, args_cli))
+@hydra_task_config(args_cli.task, "")
+def main(env_cfg: ManagerBasedEnvCfg, _agent_cfg):
+    """Run each player's deterministic policy on that player's observations."""
     env_cfg.scene.num_envs = args_cli.num_envs
-    env_cfg.seed = agent_cfg.seed
+    env_cfg.seed = random.randint(0, 10000) if args_cli.seed == -1 else args_cli.seed
     if args_cli.device is not None:
         env_cfg.sim.device = args_cli.device
-        agent_cfg.device = args_cli.device
-    log_root = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
-    checkpoint = (
-        retrieve_file_path(args_cli.checkpoint)
-        if args_cli.checkpoint
-        else get_checkpoint_path(log_root, agent_cfg.load_run, agent_cfg.load_checkpoint)
-    )
-    log_dir = os.path.dirname(checkpoint)
-    env_cfg.log_dir = log_dir
-    print(f"[INFO] Playing checkpoint: {checkpoint}")
+    player0_checkpoint_path = retrieve_file_path(args_cli.player0_checkpoint)
+    player1_checkpoint_path = retrieve_file_path(args_cli.player1_checkpoint)
+    print(f"[INFO] Player 0 TorchScript model: {player0_checkpoint_path}")
+    print(f"[INFO] Player 1 TorchScript model: {player1_checkpoint_path}")
 
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    env = gym.make(args_cli.task, cfg=env_cfg)
     try:
-        if args_cli.video:
-            env = gym.wrappers.RecordVideo(
-                env,
-                video_folder=os.path.join(log_dir, "videos", "play"),
-                step_trigger=lambda step: step == 0,
-                video_length=args_cli.video_length,
-                disable_logger=True,
-            )
-        env = SharedPolicyVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-        load_weights(runner, checkpoint)
-        policy = runner.get_inference_policy(device=env.device)
-        obs = env.get_observations()
-        timestep = 0
+        obs, _ = env.reset()
+        player0_policy = torch.jit.load(player0_checkpoint_path, map_location=env.unwrapped.device).eval()
+        player1_policy = torch.jit.load(player1_checkpoint_path, map_location=env.unwrapped.device).eval()
+        controller = DualPlayerController(
+            player0_policy,
+            player1_policy,
+            clip_actions=args_cli.clip_actions,
+        )
         while simulation_app.is_running():
-            start_time = time.perf_counter()
             with torch.inference_mode():
-                obs, _, _, _ = env.step(policy(obs))
-            timestep += 1
-            if args_cli.video and timestep >= args_cli.video_length:
-                break
-            if args_cli.real_time:
-                time.sleep(max(env.unwrapped.step_dt - (time.perf_counter() - start_time), 0.0))
+                obs, _ = env.step(controller(obs))
     finally:
         env.close()
 
