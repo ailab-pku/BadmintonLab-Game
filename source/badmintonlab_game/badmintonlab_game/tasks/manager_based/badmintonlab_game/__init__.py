@@ -8,7 +8,7 @@
 import gymnasium as gym
 
 gym.register(
-    id="BadmintonLab-Game",
+    id="BadmintonLab-Game-Play",
     entry_point=f"{__name__}.dual_agent_env:DualAgentBadmintonEnv",
     disable_env_checker=True,
     kwargs={
