@@ -39,7 +39,6 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import badmintonlab_game.tasks  # noqa: F401
-from badmintonlab_game.policy import PlaybackPolicy
 
 
 @hydra_task_config(args_cli.task, "")
@@ -57,13 +56,13 @@ def main(env_cfg: ManagerBasedEnvCfg, _agent_cfg):
     env = gym.make(args_cli.task, cfg=env_cfg)
     try:
         obs, _ = env.reset()
-        dimensions = env.unwrapped.action_manager.action_term_dim
-        player0_policy = PlaybackPolicy(player0_checkpoint_path, env.unwrapped.device, dimensions[0])
-        player1_policy = PlaybackPolicy(player1_checkpoint_path, env.unwrapped.device, dimensions[1])
+        device = env.unwrapped.device
+        player0_policy = torch.jit.load(player0_checkpoint_path, map_location=device).eval()
+        player1_policy = torch.jit.load(player1_checkpoint_path, map_location=device).eval()
         while simulation_app.is_running():
             with torch.inference_mode():
-                player0_action = player0_policy(obs["player_0"])
-                player1_action = player1_policy(obs["player_1"])
+                player0_action = player0_policy(obs["player_0"]).to(device=device, dtype=torch.float32)
+                player1_action = player1_policy(obs["player_1"]).to(device=device, dtype=torch.float32)
                 obs, _ = env.step(torch.cat((player0_action, player1_action), dim=-1))
     finally:
         env.close()
