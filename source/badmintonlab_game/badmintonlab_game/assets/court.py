@@ -113,6 +113,7 @@ def _solid_cfg(
     )
 
 
+@sim_utils.clone
 def spawn_net_collider(
     prim_path: str,
     cfg,
@@ -134,8 +135,16 @@ def spawn_net_collider(
 
     prim = spawn_cuboid(prim_path, cfg, translation=translation, orientation=orientation, **kwargs)
     shuttle_path = prim.GetPath().GetParentPath().AppendChild("Shuttle")
-    filtered_pairs = UsdPhysics.FilteredPairsAPI.Apply(prim)
-    filtered_pairs.CreateFilteredPairsRel().AddTarget(shuttle_path)
+    # The cuboid's Xform is not a collider: CollisionAPI lives on its geometry
+    # descendant. Author filtering there, before the outer clone decorator
+    # replicates the source environment and remaps its relationship targets.
+    pending = [prim]
+    while pending:
+        child = pending.pop()
+        if child.HasAPI(UsdPhysics.CollisionAPI):
+            filtered_pairs = UsdPhysics.FilteredPairsAPI.Apply(child)
+            filtered_pairs.CreateFilteredPairsRel().AddTarget(shuttle_path)
+        pending.extend(child.GetChildren())
     return prim
 
 
@@ -321,7 +330,7 @@ def crossed_net(prev_shuttle_pos: torch.Tensor, curr_shuttle_pos: torch.Tensor, 
     """True for envs whose shuttle crossed the net plane within the net width."""
     dx_prev = prev_shuttle_pos[:, 0] - cfg.net_x
     dx_curr = curr_shuttle_pos[:, 0] - cfg.net_x
-    crossed_x = (dx_prev * dx_curr) < 0.0
+    crossed_x = ((dx_prev < 0.0) & (dx_curr >= 0.0)) | ((dx_prev > 0.0) & (dx_curr <= 0.0))
 
     dx = curr_shuttle_pos[:, 0] - prev_shuttle_pos[:, 0]
     safe_dx = torch.where(dx.abs() > 1e-8, dx, torch.ones_like(dx))
