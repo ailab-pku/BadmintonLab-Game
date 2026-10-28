@@ -23,6 +23,8 @@ from .player1_cfg import EventsCfg as Player1EventsCfg
 from .player1_cfg import ObsCfg as Player1ObsCfg
 
 _COURT_CFG = BadmintonCourtCfg()
+
+
 def spawn_urdf_with_racket_material(
     prim_path: str,
     cfg,
@@ -172,13 +174,11 @@ class DualAgentBadmintonEnvCfg(ManagerBasedEnvCfg):
     gravity_z = -9.81
     shuttle_landing_detection_height = 0.03
     hit_contact_threshold = 1.0
+    max_serve_height = 1.15
 
     def __post_init__(self):
         self.decimation = 4
         self.sim.dt = 0.005
-        self.viewer.origin_type = "world"
-        self.viewer.eye = (7.0, -9.0, 5.0)
-        self.viewer.lookat = (0.0, 0.0, 0.8)
         self.court = _COURT_CFG
         from badmintonlab_game.assets.court import create_badminton_court
 
