@@ -21,6 +21,6 @@ setup(
     packages=find_packages(exclude=["tests", "tests.*"]),
     python_requires=">=3.10",
     install_requires=["gymnasium", "torch"],
-    extras_require={"dev": ["build<1.4", "ruff"]},
+    extras_require={"dev": ["build<1.4", "ruff"], "video": ["imageio>=2.31,<3", "imageio-ffmpeg>=0.4"]},
     zip_safe=False,
 )

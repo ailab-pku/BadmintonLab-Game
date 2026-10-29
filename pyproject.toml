@@ -8,5 +8,6 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.ruff.lint.per-file-ignores]
 # Simulator-dependent imports must follow AppLauncher initialization.
 "scripts/rsl_rl/play.py" = ["E402", "I001"]
+"scripts/rsl_rl/render.py" = ["E402", "I001"]
 # Re-export Isaac Lab's MDP terms together with task-specific terms.
 "**/mdp/__init__.py" = ["F401", "F403"]
