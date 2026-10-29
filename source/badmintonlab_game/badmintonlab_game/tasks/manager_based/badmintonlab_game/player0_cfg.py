@@ -131,7 +131,7 @@ class ObsCfg(ObsGroup):
         func=canonical_robot_pos_court, params={"asset_cfg": SceneEntityCfg("robot_1"), "side": 0}
     )
     opponent_projected_gravity = ObsTerm(func=projected_gravity, params={"asset_cfg": SceneEntityCfg("robot_1")})
-    opponent_joint_pos = ObsTerm(func=joint_pos_rel, params={"asset_cfg": SceneEntityCfg("robot_1")})
+    opponent_joint_pos = ObsTerm(func=joint_pos_rel, scale=1.0, params={"asset_cfg": SceneEntityCfg("robot_1")})
     base_lin_vel = ObsTerm(func=base_lin_vel, params={"asset_cfg": SceneEntityCfg("robot_0")})
     base_ang_vel = ObsTerm(func=base_ang_vel, params={"asset_cfg": SceneEntityCfg("robot_0")})
     projected_gravity = ObsTerm(func=projected_gravity, params={"asset_cfg": SceneEntityCfg("robot_0")})

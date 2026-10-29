@@ -26,6 +26,7 @@ parser.add_argument("--task", default="BadmintonLab-Game-Play", help="Registered
 parser.add_argument("--num_envs", type=int, default=1, help="Number of two-player courts.")
 parser.add_argument("--seed", type=int, default=42, help="Random seed (-1 samples a seed).")
 AppLauncher.add_app_launcher_args(parser)
+parser.set_defaults(headless=True)
 args_cli, hydra_args = parser.parse_known_args()
 sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
