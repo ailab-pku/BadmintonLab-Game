@@ -24,10 +24,13 @@ parser.add_argument(
 )
 parser.add_argument("--task", default="BadmintonLab-Game-Play", help="Registered badminton task.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of two-player courts.")
+parser.add_argument("--num_rallies", type=int, default=100, help="Rallies per court before comparing total scores.")
 parser.add_argument("--seed", type=int, default=42, help="Random seed (-1 samples a seed).")
 AppLauncher.add_app_launcher_args(parser)
 parser.set_defaults(headless=True)
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.num_rallies < 1:
+    parser.error("--num_rallies must be positive")
 sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -40,6 +43,7 @@ from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import badmintonlab_game.tasks  # noqa: F401
+from match_score import MatchScore
 
 
 @hydra_task_config(args_cli.task, "")
@@ -58,13 +62,18 @@ def main(env_cfg: ManagerBasedEnvCfg, _agent_cfg):
     try:
         obs, _ = env.reset()
         device = env.unwrapped.device
+        score = MatchScore(env.unwrapped.num_envs, device, args_cli.num_rallies)
         player0_policy = torch.jit.load(player0_checkpoint_path, map_location=device).eval()
         player1_policy = torch.jit.load(player1_checkpoint_path, map_location=device).eval()
         while simulation_app.is_running():
             with torch.inference_mode():
                 player0_action = player0_policy(obs["player_0"]).to(device=device, dtype=torch.float32)
                 player1_action = player1_policy(obs["player_1"]).to(device=device, dtype=torch.float32)
-                obs, _ = env.step(torch.cat((player0_action, player1_action), dim=-1))
+                obs, info = env.step(torch.cat((player0_action, player1_action), dim=-1))
+            score.update(info)
+            if score.all_finished:
+                break
+        score.summary()
     finally:
         env.close()
 

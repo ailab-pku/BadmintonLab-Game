@@ -17,8 +17,11 @@ parser.add_argument("--player0_checkpoint", required=True, help="Player 0 compil
 parser.add_argument("--player1_checkpoint", required=True, help="Player 1 compiled TorchScript model.")
 parser.add_argument("--task", default="BadmintonLab-Game-Play", help="Registered badminton task.")
 parser.add_argument("--seed", type=int, default=42, help="Random seed (-1 samples a seed).")
+parser.add_argument("--num_rallies", type=int, default=100, help="Rallies per court before comparing total scores.")
 parser.add_argument("--output", type=Path, default=Path("outputs/videos/match.mp4"), help="Output MP4 path.")
-parser.add_argument("--video_length", type=int, default=1000, help="Number of control steps/frames (1000 = 20 s).")
+parser.add_argument(
+    "--video_length", type=int, default=1000, help="Maximum frames (1000 = 20 s); match may finish earlier."
+)
 parser.add_argument("--width", type=int, default=1280, help="Video width in pixels.")
 parser.add_argument("--height", type=int, default=720, help="Video height in pixels.")
 parser.add_argument("--shuttle_scale", type=float, default=1.5, help="Visual-only shuttle mesh scale.")
@@ -26,6 +29,8 @@ parser.add_argument("--camera_eye", type=float, nargs=3, default=(8.5, -11.0, 7.
 parser.add_argument("--camera_target", type=float, nargs=3, default=(0.0, 0.0, 0.2), help="Camera look-at position.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.num_rallies < 1:
+    parser.error("--num_rallies must be positive")
 args_cli.headless = True
 args_cli.enable_cameras = True
 args_cli.livestream = 0
@@ -44,6 +49,7 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import badmintonlab_game.tasks  # noqa: F401
 from render_scene import MatchVisuals
+from match_score import MatchScore
 
 
 @hydra_task_config(args_cli.task, "")
@@ -73,6 +79,7 @@ def main(env_cfg: ManagerBasedEnvCfg, _agent_cfg):
         raw = env.unwrapped
         device = raw.device
         obs, _ = env.reset()
+        score = MatchScore(raw.num_envs, device, args_cli.num_rallies)
         visuals = MatchVisuals(raw, args_cli.shuttle_scale)
         player0_policy = torch.jit.load(player0_path, map_location=device).eval()
         player1_policy = torch.jit.load(player1_path, map_location=device).eval()
@@ -95,17 +102,21 @@ def main(env_cfg: ManagerBasedEnvCfg, _agent_cfg):
                     with torch.inference_mode():
                         action0 = player0_policy(obs["player_0"]).to(device=device, dtype=torch.float32)
                         action1 = player1_policy(obs["player_1"]).to(device=device, dtype=torch.float32)
-                        obs, _ = env.step(torch.cat((action0, action1), dim=-1))
+                        obs, info = env.step(torch.cat((action0, action1), dim=-1))
+                    score.update(info)
                     visuals.update()
                     raw.sim.render()
                     writer.append_data(rgb.get_data()[:, :, :3])
                     frames += 1
                     if frames % 100 == 0:
                         print(f"[INFO] Recorded {frames}/{args_cli.video_length} frames", flush=True)
+                    if score.all_finished:
+                        break
         finally:
             rgb.detach()
             render_product.destroy()
         print(f"[INFO] Saved {frames} frames ({frames / fps:.2f} s): {output}", flush=True)
+        score.summary()
     finally:
         env.close()
 

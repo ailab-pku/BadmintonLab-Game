@@ -23,6 +23,7 @@ class DualAgentBadmintonEnv(ManagerBasedEnv, gym.Env):
         self.next_hitter = torch.zeros(n, dtype=torch.long, device=self.device)
         self.last_hitter = torch.full((n,), -1, dtype=torch.long, device=self.device)
         self.rally_resolved = torch.zeros(n, dtype=torch.bool, device=self.device)
+        self.rally_winner = torch.full((n,), -1, dtype=torch.long, device=self.device)
         self._in_contact = torch.zeros((n, 2), dtype=torch.bool, device=self.device)
         self.serve_height_fault = torch.zeros(n, dtype=torch.bool, device=self.device)
         self.double_hit_fault = torch.zeros(n, dtype=torch.bool, device=self.device)
@@ -58,6 +59,7 @@ class DualAgentBadmintonEnv(ManagerBasedEnv, gym.Env):
 
         # Preserve the just-finished rally's flags before reset clears its state.
         self.extras["rally_resolved"] = self.rally_resolved.clone()
+        self.extras["rally_winner"] = self.rally_winner.clone()
         self.extras["serve_height_fault"] = self.serve_height_fault.clone()
         self.extras["double_hit_fault"] = self.double_hit_fault.clone()
         reset_ids = self.rally_resolved.nonzero(as_tuple=False).flatten()
@@ -92,6 +94,7 @@ class DualAgentBadmintonEnv(ManagerBasedEnv, gym.Env):
             high_serve = hit & (self.last_hitter < 0) & (height > self.cfg.max_serve_height)
             self.double_hit_fault |= wrong_turn
             self.serve_height_fault |= high_serve
+            self.rally_winner[wrong_turn | high_serve] = 1 - side
             self.rally_resolved |= wrong_turn | high_serve
             valid = hit & ~self.rally_resolved
             self.just_hit[:, side] |= valid
@@ -105,6 +108,16 @@ class DualAgentBadmintonEnv(ManagerBasedEnv, gym.Env):
         prev_local = self.prev_shuttle_pos_w - self.scene.env_origins
         net_fault = is_net_fault(prev_local, local, self.cfg.court)
         out_fault = is_out_of_bounds(local, self.cfg.court) & (self.last_hitter >= 0)
+        # Latch the first result: later physics substeps must not change its winner.
+        active = ~self.rally_resolved
+        shot_fault = active & (net_fault | out_fault)
+        hitter = torch.where(self.last_hitter >= 0, self.last_hitter, self.next_hitter)
+        self.rally_winner[shot_fault] = 1 - hitter[shot_fault]
+        landed = active & self.shuttle_landed & ~shot_fault
+        # Player 0 owns negative x, player 1 positive x. A missed opening drop
+        # also loses on the opening player's half, even without a recorded hit.
+        landing_side = (local[:, 0] >= self.cfg.court.net_x).long()
+        self.rally_winner[landed] = 1 - landing_side[landed]
         self.rally_resolved |= net_fault | out_fault | self.shuttle_landed
 
     def _reset_idx(self, env_ids: Sequence[int]):
@@ -112,6 +125,7 @@ class DualAgentBadmintonEnv(ManagerBasedEnv, gym.Env):
         self.just_hit[env_ids] = False
         self.last_hitter[env_ids] = -1
         self.rally_resolved[env_ids] = False
+        self.rally_winner[env_ids] = -1
         self.shuttle_landed[env_ids] = False
         self._in_contact[env_ids] = False
         self.serve_height_fault[env_ids] = False
