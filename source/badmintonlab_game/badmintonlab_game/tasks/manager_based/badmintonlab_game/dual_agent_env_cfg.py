@@ -177,8 +177,9 @@ class DualAgentBadmintonEnvCfg(ManagerBasedEnvCfg):
     max_serve_height = 1.15
 
     def __post_init__(self):
-        self.decimation = 4
-        self.sim.dt = 0.005
+        # Run physics at 1000 Hz and advance the policy at 50 Hz (20 physics steps).
+        self.decimation = 20
+        self.sim.dt = 0.001
         self.court = _COURT_CFG
         from badmintonlab_game.assets.court import create_badminton_court
 
